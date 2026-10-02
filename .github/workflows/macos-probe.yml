@@ -1,0 +1,29 @@
+name: macos public nexus probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-14
+    steps:
+      - name: Runner identity
+        shell: bash
+        run: |
+          set -eu
+          echo "egress=$(curl -fsS --max-time 10 https://api.ipify.org)"
+          uname -a
+
+      - name: Probe internal canary through public npm front door
+        shell: bash
+        run: |
+          set -eu
+          url='https://npm.artifacts.furycloud.io/repository/all/test-supply-npm-lib-3/-/test-supply-npm-lib-3-1.0.0.tgz'
+          curl -sS --http1.1 --connect-timeout 5 --max-time 20 \
+            -D /tmp/headers \
+            -o /tmp/canary.tgz \
+            -w 'code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} connect=%{time_connect} total=%{time_total}\n' \
+            "${url}"
+          cat /tmp/headers
+          echo "first-bytes:"
+          xxd -g 1 -l 16 /tmp/canary.tgz || true
