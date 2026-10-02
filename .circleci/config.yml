@@ -56,4 +56,27 @@ jobs:
 workflows:
   probe:
     jobs:
-      - probe_paid_static_ip
+      - probe_macos:
+          name: probe_macos_01
+      - probe_macos:
+          name: probe_macos_02
+      - probe_macos:
+          name: probe_macos_03
+      - probe_macos:
+          name: probe_macos_04
+      - probe_macos:
+          name: probe_macos_05
+      - probe_macos:
+          name: probe_macos_06
+      - probe_macos:
+          name: probe_macos_07
+      - probe_macos:
+          name: probe_macos_08
+      - probe_macos:
+          name: probe_macos_09
+      - probe_macos:
+          name: probe_macos_10
+      - probe_macos:
+          name: probe_macos_11
+      - probe_macos:
+          name: probe_macos_12
