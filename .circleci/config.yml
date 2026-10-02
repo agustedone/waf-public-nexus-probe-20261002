@@ -56,4 +56,4 @@ jobs:
 workflows:
   probe:
     jobs:
-      - probe_macos
+      - probe_paid_static_ip
