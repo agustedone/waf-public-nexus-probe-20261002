@@ -1,0 +1,33 @@
+version: 2.1
+
+jobs:
+  probe:
+    docker:
+      - image: cimg/base:stable
+    circleci_ip_ranges: true
+    steps:
+      - run:
+          name: Runner identity
+          command: |
+            set -eu
+            echo "egress=$(curl -fsS --max-time 10 https://api.ipify.org)"
+            echo "known CircleCI job IPs:"
+            getent ahostsv4 jobs.knownips.circleci.com | awk '{print $1}' | sort -u
+      - run:
+          name: Probe internal canary through public npm front door
+          command: |
+            set -eu
+            url='https://npm.artifacts.furycloud.io/repository/all/test-supply-npm-lib-3/-/test-supply-npm-lib-3-1.0.0.tgz'
+            curl -sS --http1.1 --connect-timeout 5 --max-time 20 \
+              -D /tmp/headers \
+              -o /tmp/canary.tgz \
+              -w 'code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} connect=%{time_connect} total=%{time_total}\n' \
+              "${url}"
+            cat /tmp/headers
+            echo "first-bytes:"
+            xxd -g 1 -l 16 /tmp/canary.tgz || true
+
+workflows:
+  probe:
+    jobs:
+      - probe
