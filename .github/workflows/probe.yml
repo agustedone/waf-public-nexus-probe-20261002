@@ -1,0 +1,104 @@
+name: public nexus probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Runner identity
+        shell: bash
+        run: |
+          set -u
+          echo "egress=$(curl -sS --max-time 10 https://api.ipify.org || true)"
+          echo "region=${RUNNER_TRACKING_ID:-unknown}"
+          uname -a
+
+      - name: Public DNS view
+        shell: bash
+        run: |
+          set -u
+          for host in \
+            npm.artifacts.furycloud.io \
+            production.furycloud.io \
+            write-us-east-1-npm.artifacts.furycloud.io \
+            read-us-east-1-npm.artifacts.furycloud.io \
+            npm.nexus-pro.artifacts.furycloud.io
+          do
+            echo "===== ${host} ====="
+            dig +short "${host}" A || true
+            dig +short "${host}" CNAME || true
+          done
+
+      - name: Probe direct public names
+        shell: bash
+        run: |
+          set -u
+          probe() {
+            local url="$1"
+            echo "===== ${url} ====="
+            curl -k -sS --http1.1 --connect-timeout 5 --max-time 15 \
+              -D - -o /dev/null \
+              -w $'\nresult code=%{http_code} remote_ip=%{remote_ip} connect=%{time_connect} total=%{time_total}\n' \
+              "${url}" || true
+            echo
+          }
+
+          probe 'https://npm.artifacts.furycloud.io/repository/all/frontend-logger'
+          probe 'https://production.furycloud.io/'
+          probe 'https://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger'
+          probe 'https://read-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger'
+          probe 'https://npm.nexus-pro.artifacts.furycloud.io/repository/all/frontend-logger'
+
+      - name: Probe Furycore forced routing
+        shell: bash
+        run: |
+          set -u
+          probe() {
+            local label="$1"
+            shift
+            echo "===== ${label} ====="
+            curl -k -sS --http1.1 --connect-timeout 5 --max-time 15 \
+              -D - -o /dev/null \
+              -w $'\nresult code=%{http_code} remote_ip=%{remote_ip} connect=%{time_connect} total=%{time_total}\n' \
+              "$@" || true
+            echo
+          }
+
+          probe 'write alias via production connect-to' \
+            --connect-to write-us-east-1-npm.artifacts.furycloud.io:443:production.furycloud.io:443 \
+            'https://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger'
+
+          probe 'read alias via production connect-to' \
+            --connect-to read-us-east-1-npm.artifacts.furycloud.io:443:production.furycloud.io:443 \
+            'https://read-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger'
+
+          probe 'production host header write alias' \
+            -H 'Host: write-us-east-1-npm.artifacts.furycloud.io' \
+            'https://production.furycloud.io/repository/all/frontend-logger'
+
+          probe 'production host header npm canonical' \
+            -H 'Host: npm.artifacts.furycloud.io' \
+            'https://production.furycloud.io/repository/all/frontend-logger'
+
+      - name: Probe internal-only canary through write alias
+        shell: bash
+        run: |
+          set -u
+          url='https://write-us-east-1-npm.artifacts.furycloud.io/repository/internal/test-supply-npm-lib-4/-/test-supply-npm-lib-4-1.0.0.tgz'
+          echo "===== ${url} ====="
+          curl -k -sS --http1.1 --connect-timeout 5 --max-time 15 \
+            -D - -o /tmp/canary.tgz \
+            -w $'\nresult code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} connect=%{time_connect} total=%{time_total}\n' \
+            "${url}" || true
+          echo "first-bytes:"
+          xxd -g 1 -l 16 /tmp/canary.tgz 2>/dev/null || true
+
+      - name: Verbose timeout detail
+        shell: bash
+        run: |
+          set -u
+          curl -k -v --http1.1 --connect-timeout 5 --max-time 15 \
+            -o /dev/null \
+            'https://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger' 2>&1 || true
