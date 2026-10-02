@@ -1,0 +1,166 @@
+name: dns surface nexus probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Runner identity
+        shell: bash
+        run: |
+          set -u
+          echo "egress=$(curl -sS --max-time 10 https://api.ipify.org || true)"
+          uname -a
+
+      - name: Probe observed hostnames
+        shell: bash
+        run: |
+          set -u
+
+          probe() {
+            local host="$1"
+            local path="$2"
+            local headers body
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            printf '===== host=%s path=%s ' "${host}" "${path}"
+            curl -k -sS --http1.1 --connect-timeout 4 --max-time 8 \
+              -D "${headers}" \
+              -o "${body}" \
+              -w 'code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} ' \
+              "https://${host}${path}" || true
+            tr -d '\r' < "${headers}" | awk '
+              BEGIN { server="-"; rps="-"; auth="-"; location="-"; ct="-" }
+              tolower($1)=="server:" { server=$2 }
+              tolower($1)=="rps:" { rps=$2 }
+              tolower($1)=="www-authenticate:" { auth=$2 }
+              tolower($1)=="location:" { location=$2 }
+              tolower($1)=="content-type:" { ct=$2 }
+              END { printf "server=%s rps=%s auth=%s location=%s ct=%s ", server, rps, auth, location, ct }
+            '
+            printf 'body='
+            head -c 80 "${body}" | tr '\n' ' ' | tr '\r' ' '
+            printf '\n'
+            rm -f "${headers}" "${body}"
+          }
+
+          hosts=(
+            maven.artifacts.furycloud.io
+            npm.artifacts.furycloud.io
+            pypi.artifacts.furycloud.io
+            go.artifacts.furycloud.io
+            bin.artifacts.furycloud.io
+            fury-base.artifacts.furycloud.io
+            android.artifacts.furycloud.io
+            ios.artifacts.furycloud.io
+            public.artifacts.furycloud.io
+            rust.artifacts.furycloud.io
+            docker-rp-base.artifacts.furycloud.io
+            docker-core.artifacts.furycloud.io
+            npm.nexus-pro.artifacts.furycloud.io
+            test-nexus-pro.artifacts.furycloud.io
+            maven-read.artifacts.furycloud.io
+            write-maven.artifacts.furycloud.io
+            read-java.artifacts.furycloud.io
+            write-java.artifacts.furycloud.io
+            read-us-east-1-java.artifacts.furycloud.io
+            read-us-east-1-java-test.artifacts.furycloud.io
+            read-us-east-1-go.artifacts.furycloud.io
+            read-us-east-1-go-test.artifacts.furycloud.io
+            read-us-east-1-npm.artifacts.furycloud.io
+            read-us-east-1-npm-test.artifacts.furycloud.io
+            read-us-east-1-pypi.artifacts.furycloud.io
+            read-us-east-1-pypi-test.artifacts.furycloud.io
+            write-npm.artifacts.furycloud.io
+            write-us-east-1-npm.artifacts.furycloud.io
+            write-us-east-1-npm-old.artifacts.furycloud.io
+            write-us-east-1-npm-new.artifacts.furycloud.io
+            write-us-east-1-npmjs.artifacts.furycloud.io
+            write-us-east-1-npmjs-pg.artifacts.furycloud.io
+            write-us-east-1-npm-backup.artifacts.furycloud.io
+            write-us-east-1-pypi.artifacts.furycloud.io
+            write-us-east-1-java.artifacts.furycloud.io
+            write-us-east-1-nexuspro-poc.artifacts.furycloud.io
+            nexus-stage.artifacts.furycloud.io
+            local-npm.artifacts.furycloud.io
+            android-test.artifacts.furycloud.io
+            android-stage.artifacts.furycloud.io
+            bin-test.artifacts.furycloud.io
+            docker-core-test.artifacts.furycloud.io
+            fury-base-test.artifacts.furycloud.io
+            fury-test.artifacts.furycloud.io
+            go-test.artifacts.furycloud.io
+            ios-test.artifacts.furycloud.io
+            ios-stage.artifacts.furycloud.io
+            maven-test.artifacts.furycloud.io
+            npm-test.artifacts.furycloud.io
+            public-test.artifacts.furycloud.io
+            pypi-test.artifacts.furycloud.io
+            pypitest.artifacts.furycloud.io
+            rust-test.artifacts.furycloud.io
+            testami-test.artifacts.furycloud.io
+            os-packages.artifacts.furycloud.io
+            os-packages-test.artifacts.furycloud.io
+            production.furycloud.io
+            infratools.furycloud.io
+            write-java.ca-central-1.aws.furycloud.io
+            control.nexus.meli.furyplatform.com
+            docker.nexus.meli.furyplatform.com
+            maven.nexus.meli.furyplatform.com
+            npm.nexus.meli.furyplatform.com
+            test.nexus.meli.furyplatform.com
+          )
+
+          for host in "${hosts[@]}"; do
+            probe "${host}" "/"
+            probe "${host}" "/repository/all/test-supply-npm-lib-1/-/test-supply-npm-lib-1-1.0.0.tgz"
+          done
+
+      - name: Probe current public ALBs with npm Host
+        shell: bash
+        run: |
+          set -u
+
+          probe() {
+            local alb="$1"
+            local headers body
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            printf '===== alb=%s host=npm.artifacts.furycloud.io ' "${alb}"
+            curl -k -sS --http1.1 --connect-timeout 4 --max-time 8 \
+              -H 'Host: npm.artifacts.furycloud.io' \
+              -D "${headers}" \
+              -o "${body}" \
+              -w 'code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} ' \
+              "https://${alb}/repository/all/test-supply-npm-lib-1/-/test-supply-npm-lib-1-1.0.0.tgz" || true
+            tr -d '\r' < "${headers}" | awk '
+              BEGIN { server="-"; rps="-"; auth="-"; location="-"; ct="-" }
+              tolower($1)=="server:" { server=$2 }
+              tolower($1)=="rps:" { rps=$2 }
+              tolower($1)=="www-authenticate:" { auth=$2 }
+              tolower($1)=="location:" { location=$2 }
+              tolower($1)=="content-type:" { ct=$2 }
+              END { printf "server=%s rps=%s auth=%s location=%s ct=%s ", server, rps, auth, location, ct }
+            '
+            printf 'body='
+            head -c 80 "${body}" | tr '\n' ' ' | tr '\r' ' '
+            printf '\n'
+            rm -f "${headers}" "${body}"
+          }
+
+          for alb in \
+            fury-nexus-alb-public-maven-prod-1016453199.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-npm-prod-220564011.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-pypi-prod-739669185.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-go-prod-1954100714.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-fury-prod-1851549055.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-bin-prod-1033672094.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-ios-prod-758654752.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-pub-android-prod-1341890545.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-pub-public-prod-1296648025.us-east-1.elb.amazonaws.com \
+            fury-nexus-alb-public-rust-prod-2119732397.us-east-1.elb.amazonaws.com
+          do
+            probe "${alb}"
+          done
