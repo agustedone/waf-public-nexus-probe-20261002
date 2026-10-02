@@ -141,3 +141,124 @@ jobs:
             tr -d '\r' < "${headers}" | awk 'BEGIN { server="-"; rps="-" } tolower($1)=="server:" { server=$2 } tolower($1)=="rps:" { rps=$2 } END { printf "server=%s rps=%s\n", server, rps }'
             rm -f "${headers}"
           done
+
+      - name: Scan legacy and alternate public entry points
+        shell: bash
+        run: |
+          set -u
+          probe() {
+            local label="$1"
+            local host="$2"
+            local url="$3"
+            echo "===== ${label} host=${host} ====="
+            curl -k -sS --http1.1 --connect-timeout 5 --max-time 15 \
+              -H "Host: ${host}" \
+              -D - -o /dev/null \
+              -w $'\nresult code=%{http_code} remote_ip=%{remote_ip} connect=%{time_connect} total=%{time_total}\n' \
+              "${url}" || true
+            echo
+          }
+
+          for host in \
+            npm.artifacts.furycloud.io \
+            write-us-east-1-npm.artifacts.furycloud.io \
+            read-us-east-1-npm.artifacts.furycloud.io
+          do
+            probe 'legacy fury-core external ELB' "${host}" \
+              'https://fury-core-external-elb-1248167279.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+            probe 'legacy fury-trouble ELB' "${host}" \
+              'https://fury-trouble-1219831425.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+            probe 'fury proxy internet ALB' "${host}" \
+              'https://fury-proxy-internet-1392435328.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+            probe 'docker prod ALB' "${host}" \
+              'https://fury-artifacts-docker-prod-alb-1194580091.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+            probe 'docker test ALB' "${host}" \
+              'https://fury-artifacts-docker-test-alb-777605583.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+            probe 'public Nexus test ALB' "${host}" \
+              'https://fury-nexus-alb-public-test-test-384832048.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+          done
+
+          probe 'public Nexus test ALB expected test host' 'test.nexus-pro.artifacts.furycloud.io' \
+            'https://fury-nexus-alb-public-test-test-384832048.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+          probe 'public Nexus test ALB unexpected rust prod host' 'rust.artifacts.furycloud.io' \
+            'https://fury-nexus-alb-public-test-test-384832048.us-east-1.elb.amazonaws.com/repository/all/frontend-logger'
+
+      - name: Probe fury-proxy-internet as forward proxy
+        shell: bash
+        run: |
+          set -u
+          for target in \
+            'http://npm.artifacts.furycloud.io/repository/all/frontend-logger' \
+            'https://npm.artifacts.furycloud.io/repository/all/frontend-logger' \
+            'http://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger' \
+            'https://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger'
+          do
+            echo "===== proxy target ${target} ====="
+            curl -k --proxy-insecure -sS --http1.1 --connect-timeout 5 --max-time 15 \
+              -x 'https://fury-proxy-internet-1392435328.us-east-1.elb.amazonaws.com:443' \
+              -D - -o /dev/null \
+              -w $'\nresult code=%{http_code} remote_ip=%{remote_ip} connect=%{time_connect} total=%{time_total}\n' \
+              "${target}" || true
+            echo
+          done
+
+      - name: Probe WAF and ALB Host parsing discrepancies
+        shell: bash
+        run: |
+          set -u
+          python3 - <<'PY'
+          import socket
+          import ssl
+
+          target = "fury-nexus-alb-public-npm-prod-220564011.us-east-1.elb.amazonaws.com"
+          cases = {
+              "duplicate_host_unblocked_then_canonical": (
+                  b"GET /repository/all/frontend-logger HTTP/1.1\r\n"
+                  b"Host: example.invalid\r\n"
+                  b"Host: npm.artifacts.furycloud.io\r\n"
+                  b"Connection: close\r\n\r\n"
+              ),
+              "duplicate_host_canonical_then_unblocked": (
+                  b"GET /repository/all/frontend-logger HTTP/1.1\r\n"
+                  b"Host: npm.artifacts.furycloud.io\r\n"
+                  b"Host: example.invalid\r\n"
+                  b"Connection: close\r\n\r\n"
+              ),
+              "absolute_form_unblocked_host": (
+                  b"GET https://npm.artifacts.furycloud.io/repository/all/frontend-logger HTTP/1.1\r\n"
+                  b"Host: example.invalid\r\n"
+                  b"Connection: close\r\n\r\n"
+              ),
+              "absolute_form_alias_host": (
+                  b"GET https://npm.artifacts.furycloud.io/repository/all/frontend-logger HTTP/1.1\r\n"
+                  b"Host: write-us-east-1-npm.artifacts.furycloud.io\r\n"
+                  b"Connection: close\r\n\r\n"
+              ),
+          }
+
+          ctx = ssl.create_default_context()
+          ctx.check_hostname = False
+          ctx.verify_mode = ssl.CERT_NONE
+
+          for name, payload in cases.items():
+              print(f"===== {name} =====")
+              try:
+                  with socket.create_connection((target, 443), timeout=5) as raw:
+                      with ctx.wrap_socket(raw, server_hostname="npm.artifacts.furycloud.io") as tls:
+                          tls.settimeout(10)
+                          tls.sendall(payload)
+                          chunks = []
+                          while True:
+                              data = tls.recv(4096)
+                              if not data:
+                                  break
+                              chunks.append(data)
+                              if sum(map(len, chunks)) > 16384:
+                                  break
+                  response = b"".join(chunks).decode("latin1", "replace")
+                  head = response.split("\r\n\r\n", 1)[0]
+                  print(head)
+              except Exception as exc:
+                  print(f"error={type(exc).__name__}: {exc}")
+              print()
+          PY
