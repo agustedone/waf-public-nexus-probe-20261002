@@ -1,7 +1,7 @@
 version: 2.1
 
 jobs:
-  probe:
+  probe_paid_static_ip:
     docker:
       - image: cimg/base:stable
     circleci_ip_ranges: true
@@ -27,7 +27,33 @@ jobs:
             echo "first-bytes:"
             xxd -g 1 -l 16 /tmp/canary.tgz || true
 
+  probe_macos:
+    macos:
+      xcode: 26.3.0
+    resource_class: m4pro.medium
+    steps:
+      - run:
+          name: Runner identity
+          command: |
+            set -eu
+            echo "egress=$(curl -fsS --max-time 10 https://api.ipify.org)"
+            echo "known CircleCI macOS ranges:"
+            curl -fsS https://circleci.com/docs/ip-ranges-list.json | jq -r '.IPRanges.macOS[]'
+      - run:
+          name: Probe internal canary through public npm front door
+          command: |
+            set -eu
+            url='https://npm.artifacts.furycloud.io/repository/all/test-supply-npm-lib-3/-/test-supply-npm-lib-3-1.0.0.tgz'
+            curl -sS --http1.1 --connect-timeout 5 --max-time 20 \
+              -D /tmp/headers \
+              -o /tmp/canary.tgz \
+              -w 'code=%{http_code} remote_ip=%{remote_ip} size=%{size_download} connect=%{time_connect} total=%{time_total}\n' \
+              "${url}"
+            cat /tmp/headers
+            echo "first-bytes:"
+            xxd -g 1 -l 16 /tmp/canary.tgz || true
+
 workflows:
   probe:
     jobs:
-      - probe
+      - probe_macos
