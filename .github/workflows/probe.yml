@@ -102,3 +102,42 @@ jobs:
           curl -k -v --http1.1 --connect-timeout 5 --max-time 15 \
             -o /dev/null \
             'https://write-us-east-1-npm.artifacts.furycloud.io/repository/all/frontend-logger' 2>&1 || true
+
+      - name: Scan world-open singlevpc-main ALBs for artifact Host routing
+        shell: bash
+        run: |
+          set -u
+          for alb in \
+            frontend-condor-public-bc-f7c742-1573934866.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-cc-154163-540847736.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-h--95b08d-744192371.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-l--e99b46-1546851758.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-m--b7d988-312384474.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-ml-236aaf-686051025.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-ml-bfb25f-1828272909.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-ml-cb5197-75299813.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-ml-d634da-2140043740.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-ml-ea3a50-953118998.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-rt-2b1522-910871775.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-rt-802ee7-862187859.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-rt-832dd7-617097798.us-east-1.elb.amazonaws.com \
+            frontend-condor-public-t--3e8589-1566395914.us-east-1.elb.amazonaws.com \
+            frontend-row-traffic-laye-80c90e-1347733461.us-east-1.elb.amazonaws.com \
+            frontend-rtc-traffic-laye-f6e5c0-1111993847.us-east-1.elb.amazonaws.com \
+            frontend-test-traffic-lay-5a3c3f-1914442310.us-east-1.elb.amazonaws.com \
+            fury-proxy-internet-1392435328.us-east-1.elb.amazonaws.com \
+            k8s-default-furytrou-85f8ee9572-1540854479.us-east-1.elb.amazonaws.com \
+            pub-fury-node-go-prod-alb-1154758589.us-east-1.elb.amazonaws.com \
+            static-tl-traffic-layer-1da4c5-1177392662.us-east-1.elb.amazonaws.com
+          do
+            printf '===== %-82s ' "${alb}"
+            headers="$(mktemp)"
+            curl -k -sS --http1.1 --connect-timeout 3 --max-time 6 \
+              -H 'Host: write-us-east-1-npm.artifacts.furycloud.io' \
+              -D "${headers}" \
+              -o /dev/null \
+              -w 'code=%{http_code} remote_ip=%{remote_ip} ' \
+              "https://${alb}/repository/all/frontend-logger" || true
+            tr -d '\r' < "${headers}" | awk 'BEGIN { server="-"; rps="-" } tolower($1)=="server:" { server=$2 } tolower($1)=="rps:" { rps=$2 } END { printf "server=%s rps=%s\n", server, rps }'
+            rm -f "${headers}"
+          done
